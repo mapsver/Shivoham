@@ -18,12 +18,7 @@ package com.atmavedagana.shivoham.shivoham;
 import android.app.Activity;
 import android.app.Fragment;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
-import android.support.v4.app.FragmentActivity;
 import android.support.v4.media.MediaBrowserCompat;
-import android.support.v4.media.MediaMetadataCompat;
-import android.support.v4.media.session.MediaControllerCompat;
-import android.support.v4.media.session.PlaybackStateCompat;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -31,12 +26,10 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.atmavedagana.shivoham.shivoham.utils.LogHelper;
 
 import java.util.ArrayList;
-import java.util.List;
 
 /**
  * A Fragment that lists all the various browsable queues available

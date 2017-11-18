@@ -2,15 +2,14 @@ package com.atmavedagana.shivoham.shivoham;
 
 import android.app.FragmentTransaction;
 import android.content.Intent;
-import android.support.v4.media.MediaBrowserCompat;
-import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
-import android.text.TextUtils;
+import android.view.MenuItem;
+import android.widget.Toast;
 
 import com.atmavedagana.shivoham.shivoham.utils.FileUtils;
 import com.atmavedagana.shivoham.shivoham.utils.LogHelper;
 
-public class FirstJGDActivity extends AppCompatActivity
+public class FirstJGDActivity extends ActionBarCastActivity
                                 implements MediaBrowserFragment.MediaFragmentListener {
 
     private static final String TAG = LogHelper.makeLogTag(FirstJGDActivity.class);
@@ -20,11 +19,15 @@ public class FirstJGDActivity extends AppCompatActivity
     private AVGMediaBrowser mMediaBrowser = null;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_firstjgd);
 
+        initializeToolbar(R.menu.main);
         initializeFromParams(savedInstanceState, getIntent());
+
+        // todo@shiv: If saved state.. then restore the old setting
+        GlobalSettingsSingleton.getInstance().setDefaults();
 
         mMediaBrowser = new AVGMediaBrowser(FileUtils.getMediaStorageRootFolder(this));
     }
@@ -68,9 +71,10 @@ public class FirstJGDActivity extends AppCompatActivity
 
         LogHelper.d(TAG, "onMediaItemSelected");
 
-        String[] strArr = new String[2];
+        String[] strArr = new String[3];
         strArr[0] = item.getmPDFFileSaveToPath();
         strArr[1] = item.getmAudioFileSaveToPath();
+        strArr[2] = item.getmDisplayTitle();
         Intent openPDFIntent = new Intent(this, PDF_Activity.class);
         openPDFIntent.putExtra(Intent.ACTION_OPEN_DOCUMENT, strArr);
 
@@ -90,6 +94,17 @@ public class FirstJGDActivity extends AppCompatActivity
     @Override
     public void setToolbarTitle(CharSequence title) {
 
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.action_settings) {
+            Intent prefsIntent = new Intent(this, PreferenceSettings.class);
+            startActivity(prefsIntent);
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
     }
 
     @Override

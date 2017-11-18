@@ -59,9 +59,10 @@ public class FileUtils {
                 String mediaName = f.getPath().replaceFirst("[.][^.]+$", "");
                 File pdfFile = new File(mediaName + PDF_EXT);
                 File mp3File = new File(mediaName + MP3_EXT);
+                String mediaCoreFileName = f.getName();
 
                 if (pdfFile.isFile() && mp3File.isFile()) {
-                    returnList.add(new AVGMediaItem(mediaName, "VE410", "", "", "", f.getPath(), mp3File.getPath(), pdfFile.getPath()));
+                    returnList.add(new AVGMediaItem("Medha Suktam", "VE410", "", "", "", f.getPath(), mp3File.getPath(), pdfFile.getPath()));
                 }
             }
         }

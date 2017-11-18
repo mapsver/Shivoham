@@ -19,15 +19,23 @@ import android.widget.Toast;
 import com.github.barteksc.pdfviewer.PDFView;
 import com.github.barteksc.pdfviewer.listener.OnDrawListener;
 import com.github.barteksc.pdfviewer.listener.OnLoadCompleteListener;
+import com.google.android.exoplayer2.ExoPlaybackException;
+import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.ExoPlayerFactory;
+import com.google.android.exoplayer2.PlaybackParameters;
+import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
+import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.audio.MediaCodecAudioRenderer;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.ExtractorsFactory;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
+import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
@@ -40,12 +48,18 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 
 
-public class PDF_Activity extends AppCompatActivity {
+public class PDF_Activity extends ActionBarCastActivity
+                        implements PlayerControlBarView.PlayerControlsBarListener {
 
     public enum TOUCHMODE { MARKER_START, MARKER_END, TOP_GUIDE, BOT_GUIDE };
 
+    private static final String CONTROLS_FRAGMENT_TAG = "player_controls_bar";
+
     private TOUCHMODE mTouchMode;
-    private String mAudioLocalFilePath, mTextLocalFilePath;
+    private String mAudioLocalFilePath = null, mTextLocalFilePath = null;
+    private String mContentTitle = "";
+
+    PlayerControlBarView playerControlBarView = null;
 
     private FrameLayout mfl_mainFrame = null;
     private TextView mtv_touchMask =null;
@@ -61,6 +75,7 @@ public class PDF_Activity extends AppCompatActivity {
     private LinearLayout mll_botGuide = null;
 
     private long mCurrentPlayPostion;
+    boolean mFirstTimeSetupDoneFlag = false;
 
     private String mOutputFilePath;
     OutputStreamWriter myOutWriter;
@@ -171,19 +186,28 @@ public class PDF_Activity extends AppCompatActivity {
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_pdf);
+        initializeToolbar(R.menu.pdfmenu);
+
+        //UNPACK OUR DATA FROM INTENT
+        Intent i = this.getIntent();
+        String[] path = i.getExtras().getStringArray(Intent.ACTION_OPEN_DOCUMENT);
+        if (path.length == 3) {
+            mTextLocalFilePath = path[0];
+            mAudioLocalFilePath = path[1];
+            mContentTitle = path[2];
+        }
+
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle("");
+        }
 
         mtv_touchMask = (TextView) findViewById(R.id.tv_touchMask);
-        //mtv_coords = (TextView) findViewById(R.id.tv_coords);
-        //mtv_playTime = (TextView) findViewById(R.id.tv_playtime);
-
-        //HideTopBar();
-
         //PDFVIEW SHALL DISPLAY OUR PDFS
         mPdfView = (PDFView) findViewById(R.id.pdfView);
-
         //SACRIFICE MEMORY FOR QUALITY
         //pdfView.useBestQuality(true)
 
@@ -205,13 +229,7 @@ public class PDF_Activity extends AppCompatActivity {
         //prepare the output file
         prepOutputFile();
 
-        //UNPACK OUR DATA FROM INTENT
-        Intent i = this.getIntent();
-        String[] path = i.getExtras().getStringArray(Intent.ACTION_OPEN_DOCUMENT);
-        if (path.length == 2) {
-            mTextLocalFilePath = path[0];
-            mAudioLocalFilePath = path[1];
-
+        if (mTextLocalFilePath !=null && mAudioLocalFilePath != null) {
             mHighlightManager. setupCoordsList(mTextLocalFilePath);
             openPDFFile();
             playMusic();
@@ -219,7 +237,13 @@ public class PDF_Activity extends AppCompatActivity {
             localToast.makeText(this, "Illegal path location.", Toast.LENGTH_SHORT).show();
     }
 
+    public void initializePlayerControlsBar(long totalAudioDuration) {
+        playerControlBarView = (PlayerControlBarView) findViewById(R.id.controls_layout);
+        playerControlBarView.setPlayerControlsBarListener(this);
 
+        playerControlBarView.setUseMode(GlobalSettingsSingleton.getInstance().getmUseModeState());
+        playerControlBarView.setTotalTime(totalAudioDuration);
+    }
 
     public void HideTopBar() {
         View decorView = getWindow().getDecorView();
@@ -425,6 +449,7 @@ public class PDF_Activity extends AppCompatActivity {
         com.google.android.exoplayer2.upstream.DataSource.Factory dataSourceFactory;
         MediaSource mediaSource;
 
+
         bandwidthMeter = new DefaultBandwidthMeter();
         extractorsFactory = new DefaultExtractorsFactory();
         trackSelectionFactory = new AdaptiveTrackSelection.Factory(bandwidthMeter);
@@ -441,8 +466,39 @@ public class PDF_Activity extends AppCompatActivity {
         mediaSource = new ExtractorMediaSource(Uri.parse(mAudioLocalFilePath), dataSourceFactory, extractorsFactory, null, null);
         player = ExoPlayerFactory.newSimpleInstance(this, trackSelector);
         player.prepare(mediaSource);
-        player.setPlayWhenReady(false);
 
+        player.setPlayWhenReady(false);
+        player.addListener(new SimpleExoPlayer.EventListener() {
+            @Override
+            public void onTimelineChanged(Timeline timeline, Object manifest) {}
+
+            @Override
+            public void onTracksChanged(TrackGroupArray trackGroups, TrackSelectionArray trackSelections) {}
+
+            @Override
+            public void onLoadingChanged(boolean isLoading) {}
+
+            @Override
+            public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+                if (playbackState == ExoPlayer.STATE_READY && !mFirstTimeSetupDoneFlag) {
+                    long realDurationMillis = player.getDuration();
+                    initializePlayerControlsBar(realDurationMillis / 10);
+                    mFirstTimeSetupDoneFlag = true;
+                }
+            }
+
+            @Override
+            public void onRepeatModeChanged(int repeatMode) {}
+
+            @Override
+            public void onPlayerError(ExoPlaybackException error) {}
+
+            @Override
+            public void onPositionDiscontinuity() {}
+
+            @Override
+            public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {}
+        });
         trackProgress();
     }
 
@@ -459,23 +515,32 @@ public class PDF_Activity extends AppCompatActivity {
                         identifyAndHighlightMarker(position);
                         mHandler.postDelayed(this, 500);
                     }
-                    if (player.getPlaybackState() == SimpleExoPlayer.STATE_ENDED)
+                    if (player.getPlaybackState() == SimpleExoPlayer.STATE_ENDED) {
+                        notifyAudioEnded();
                         mHandler.removeCallbacks(this);
+                    }
                 }
             }
         };
         mHandler.postDelayed(mRunnable, 500);
     }
 
+    public void notifyAudioEnded() {
+        playerControlBarView.setPlayPauseButtonIcon(true);
+    }
+
     public void identifyAndHighlightMarker(long position) {
         if (mHighlightManager.isMarkerPresentForPos(position)) {
             highlightText();
         }
-        //mtv_playTime.setText(String.valueOf(position));
+
+        long duration = player.getDuration() / 10;
+        playerControlBarView.setElapsedTime(position);
+        playerControlBarView.setTotalTime(duration);
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         // TODO: 9/28/2017 @Shiv: remember position state to enable playback from same spot
         long position = player.getCurrentPosition();
         player.setPlayWhenReady(false);
@@ -493,4 +558,44 @@ public class PDF_Activity extends AppCompatActivity {
 //        /* Return true so that the menu is displayed in the Toolbar */
 //        return true;
 //    }
+
+
+    @Override
+    public void onClickPlayButton() {
+        onClickButtonPlayPause(playerControlBarView);
+    }
+
+    @Override
+    public void onClickPauseButton() {
+        Toast.makeText(this, "Audio paused.", Toast.LENGTH_SHORT).show();
+        onClickButtonPlayPause(playerControlBarView);
+    }
+
+    @Override
+    public void onClickPrevButton() {
+        onClickButtonPrev(playerControlBarView);
+    }
+
+    @Override
+    public void onClickNextButton() {
+        onClickButtonForward(playerControlBarView);
+    }
+
+    @Override
+    public void onClickChangeToListenMode() {
+        Toast.makeText(this, "Listen mode", Toast.LENGTH_SHORT).show();
+        GlobalSettingsSingleton.getInstance().setmUseModeState(GlobalSettingsSingleton.MODE_STATE.LISTEN_MODE);
+    }
+
+    @Override
+    public void onClickChangeToChantMode() {
+        Toast.makeText(this, "Chant-along mode", Toast.LENGTH_SHORT).show();
+        GlobalSettingsSingleton.getInstance().setmUseModeState(GlobalSettingsSingleton.MODE_STATE.CHANT_MODE);
+    }
+
+    @Override
+    public void onClickChangeToReadMode() {
+        Toast.makeText(this, "Read mode", Toast.LENGTH_SHORT).show();
+        GlobalSettingsSingleton.getInstance().setmUseModeState(GlobalSettingsSingleton.MODE_STATE.READ_MODE);
+    }
 }
