@@ -6,7 +6,6 @@ import android.graphics.Canvas;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.support.v7.app.AppCompatActivity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -19,16 +18,19 @@ import android.widget.Toast;
 import com.github.barteksc.pdfviewer.PDFView;
 import com.github.barteksc.pdfviewer.listener.OnDrawListener;
 import com.github.barteksc.pdfviewer.listener.OnLoadCompleteListener;
+import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.ExoPlayerFactory;
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.audio.MediaCodecAudioRenderer;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.ExtractorsFactory;
+import com.google.android.exoplayer2.mediacodec.MediaCodecSelector;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.TrackGroupArray;
@@ -51,7 +53,7 @@ import java.io.OutputStreamWriter;
 public class PDF_Activity extends ActionBarCastActivity
                         implements PlayerControlBarView.PlayerControlsBarListener {
 
-    public enum TOUCHMODE { MARKER_START, MARKER_END, TOP_GUIDE, BOT_GUIDE };
+    public enum TOUCHMODE { MARKER_START, MARKER_END, TOP_GUIDE, BOT_GUIDE }
 
     private static final String CONTROLS_FRAGMENT_TAG = "player_controls_bar";
 
@@ -63,28 +65,25 @@ public class PDF_Activity extends ActionBarCastActivity
 
     private FrameLayout mfl_mainFrame = null;
     private TextView mtv_touchMask =null;
-    private TextView mtv_coords =null;
-    private TextView mtv_playTime =null;
-    private SimpleExoPlayer player;
+    //private SimpleExoPlayer player;
+    private ExoPlayer player;
     private Runnable mRunnable = null;
     private Handler mHandler = null;
     private LinearLayout linearLayout = null;
-    private HighlightBox mCurrHighlighterPosition = null;
     private HighlightManager mHighlightManager = null;
     private LinearLayout mll_topGuide = null;
     private LinearLayout mll_botGuide = null;
 
-    private long mCurrentPlayPostion;
+    private long mSelectedStartPos, mSelectedEndPos;
     boolean mFirstTimeSetupDoneFlag = false;
 
     private String mOutputFilePath;
     OutputStreamWriter myOutWriter;
+    private int mTotalPages;
 
     Toast localToast;
-    int coordsCounter = 0;
 
     private PDFView mPdfView=null;
-    private int mTotalPages;
 
     PDFViewStats mPdfViewStats;
     private float mCurrTouchDownX;
@@ -97,17 +96,17 @@ public class PDF_Activity extends ActionBarCastActivity
         mtv_touchMask.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View view, MotionEvent motionEvent) {
-                if (motionEvent.getAction() == MotionEvent.ACTION_UP) { }
-                else if  (motionEvent.getAction() == MotionEvent.ACTION_DOWN) {
+                if  (motionEvent.getAction() == MotionEvent.ACTION_DOWN) {
                     switch (mTouchMode) {
                         case MARKER_START:
                             mCurrTouchDownX = motionEvent.getX();
-                            mCurrentPlayPostion = player.getContentPosition() / 10;
+                            mSelectedStartPos = player.getCurrentPosition() / 10;
                             player.setPlayWhenReady(true);
                             mTouchMode = TOUCHMODE.MARKER_END;
                             break;
                         case MARKER_END:
                             mCurrTouchUpX = motionEvent.getX();
+                            mSelectedEndPos = player.getCurrentPosition() / 10;
                             player.setPlayWhenReady(false);
                             mTouchMode = TOUCHMODE.MARKER_START;
                             createAndAddMarkerUsingSelection();
@@ -130,7 +129,7 @@ public class PDF_Activity extends ActionBarCastActivity
 
     private HighlightBox createMarkerUsingSelection() {
         return new HighlightBox(mCurrTouchDownX, mCurrTouchDownY, mCurrTouchUpX, mCurrTouchUpY,
-                mCurrentPlayPostion, mPdfViewStats.mCurrPage, mPdfViewStats.mCurrViewWidth,
+                mSelectedStartPos, mSelectedEndPos, mPdfViewStats.mCurrPage, mPdfViewStats.mCurrViewWidth,
                 mPdfViewStats.mCurrViewHeight,mPdfViewStats.mCurrOptViewWidth,mPdfViewStats.mCurrOptViewHeight);
     }
 
@@ -191,6 +190,8 @@ public class PDF_Activity extends ActionBarCastActivity
         setContentView(R.layout.activity_pdf);
         initializeToolbar(R.menu.pdfmenu);
 
+        fetchUserPreferences();
+
         //UNPACK OUR DATA FROM INTENT
         Intent i = this.getIntent();
         String[] path = i.getExtras().getStringArray(Intent.ACTION_OPEN_DOCUMENT);
@@ -232,6 +233,7 @@ public class PDF_Activity extends ActionBarCastActivity
         if (mTextLocalFilePath !=null && mAudioLocalFilePath != null) {
             mHighlightManager. setupCoordsList(mTextLocalFilePath);
             openPDFFile();
+
             playMusic();
         } else
             localToast.makeText(this, "Illegal path location.", Toast.LENGTH_SHORT).show();
@@ -241,7 +243,7 @@ public class PDF_Activity extends ActionBarCastActivity
         playerControlBarView = (PlayerControlBarView) findViewById(R.id.controls_layout);
         playerControlBarView.setPlayerControlsBarListener(this);
 
-        playerControlBarView.setUseMode(GlobalSettingsSingleton.getInstance().getmUseModeState());
+        playerControlBarView.setUseMode(GlobalSettings.getInstance().getmUseModeState());
         playerControlBarView.setTotalTime(totalAudioDuration);
     }
 
@@ -293,14 +295,14 @@ public class PDF_Activity extends ActionBarCastActivity
     }
 
     class PDFViewStats {
-        public int mCurrPage = 1;
-        public float mCurrViewWidth;
-        public float mCurrViewHeight;
-        public float mCurrOptViewWidth;
-        public float mCurrOptViewHeight;
-        public float mCurrXOffset;
-        public float mCurrYOffset;
-        public float mCurrZoomLevel;
+        int mCurrPage = 1;
+        float mCurrViewWidth;
+        float mCurrViewHeight;
+        float mCurrOptViewWidth;
+        float mCurrOptViewHeight;
+        float mCurrXOffset;
+        float mCurrYOffset;
+        float mCurrZoomLevel;
 
         public void updateVitals(PDFView pdfView) {
             mCurrZoomLevel = pdfView.getZoom();
@@ -437,9 +439,6 @@ public class PDF_Activity extends ActionBarCastActivity
     }
 
     public void playMusic() {
-        // Dont use MediaPlayer.. this is too restrictive and doesnt expose low-level APIs
-        // /MediaPlayer mPlayer = MediaPlayer.create(this, R.raw.medhasuktam);
-        //mPlayer.start();
 
         BandwidthMeter bandwidthMeter;
         ExtractorsFactory extractorsFactory;
@@ -448,27 +447,61 @@ public class PDF_Activity extends ActionBarCastActivity
         DefaultBandwidthMeter defaultBandwidthMeter;
         com.google.android.exoplayer2.upstream.DataSource.Factory dataSourceFactory;
         MediaSource mediaSource;
-
-
         bandwidthMeter = new DefaultBandwidthMeter();
         extractorsFactory = new DefaultExtractorsFactory();
         trackSelectionFactory = new AdaptiveTrackSelection.Factory(bandwidthMeter);
         trackSelector = new DefaultTrackSelector(trackSelectionFactory);
-
 /*        dataSourceFactory = new DefaultDataSourceFactory(this,
                 Util.getUserAgent(this, "mediaPlayerSample"),
                 (TransferListener<? super DataSource>) bandwidthMeter);*/
-
         defaultBandwidthMeter = new DefaultBandwidthMeter();
         dataSourceFactory = new DefaultDataSourceFactory(this,
                 Util.getUserAgent(this, "mediaPlayerSample"), defaultBandwidthMeter);
 
         mediaSource = new ExtractorMediaSource(Uri.parse(mAudioLocalFilePath), dataSourceFactory, extractorsFactory, null, null);
-        player = ExoPlayerFactory.newSimpleInstance(this, trackSelector);
-        player.prepare(mediaSource);
 
-        player.setPlayWhenReady(false);
-        player.addListener(new SimpleExoPlayer.EventListener() {
+        //Method5: using CustomRendererFactory with MediaAudioRenderer and MyNoSampleRenderer
+        CustomRenderersFactory customRenderersFactory = new CustomRenderersFactory(getApplicationContext(), this);
+        player = ExoPlayerFactory.newSimpleInstance(customRenderersFactory, trackSelector);
+
+
+//        //Method4: using MediaAudioRenderer and MyNoSampleRenderer
+//        Renderer[] renderers = new Renderer[2];
+//        Renderer audioRenderer = new MediaCodecAudioRenderer(MediaCodecSelector.DEFAULT, null, true);
+//        CustomSampleRenderer sampleRenderer = new CustomSampleRenderer();
+//        sampleRenderer.setPdf_activity(this);
+//
+//        renderers[1] = audioRenderer;
+//        renderers[0] = sampleRenderer;
+//        player = ExoPlayerFactory.newInstance(renderers, trackSelector);
+
+
+        //Method3: using CustomMediaAudioRenderer
+//        Renderer[] renderers = new Renderer[1];
+//        CustomMediaAudioRenderer customAudioRenderer = new CustomMediaAudioRenderer();
+//        customAudioRenderer.setPdf_activity(this);
+//        Renderer sampleRenderer = new CustomSampleRenderer();
+//
+//        renderers[0] = customAudioRenderer;
+//        player = ExoPlayerFactory.newInstance(renderers, trackSelector);
+
+
+        //Method2: hLiteRenderer does not work.. but audio plays
+//        Renderer[] renderers = new Renderer[2];
+//        hLiteRenderer = new HighlightRenderer();
+//        Renderer audioRenderer = new MediaCodecAudioRenderer(MediaCodecSelector.DEFAULT, null, true);
+//        renderers[0] = hLiteRenderer;
+//        renderers[1] = audioRenderer;
+//        player = ExoPlayerFactory.newInstance(renderers, trackSelector);
+
+        //Method1: Works
+        // DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(getApplicationContext());
+        // player = ExoPlayerFactory.newSimpleInstance(renderersFactory, trackSelector);
+
+        player.prepare(mediaSource);
+        player.setPlayWhenReady(true);
+
+        player.addListener(new Player.EventListener() {
             @Override
             public void onTimelineChanged(Timeline timeline, Object manifest) {}
 
@@ -484,6 +517,10 @@ public class PDF_Activity extends ActionBarCastActivity
                     long realDurationMillis = player.getDuration();
                     initializePlayerControlsBar(realDurationMillis / 10);
                     mFirstTimeSetupDoneFlag = true;
+                  //  hLiteRenderer.setPlayerControlBar(playerControlBarView);
+                }
+                if (playbackState == ExoPlayer.STATE_ENDED) {
+                    Toast.makeText(PDF_Activity.this, "Complete.", Toast.LENGTH_SHORT).show();
                 }
             }
 
@@ -491,52 +528,227 @@ public class PDF_Activity extends ActionBarCastActivity
             public void onRepeatModeChanged(int repeatMode) {}
 
             @Override
+            public void onShuffleModeEnabledChanged(boolean shuffleModeEnabled) {}
+
+            @Override
             public void onPlayerError(ExoPlaybackException error) {}
 
             @Override
-            public void onPositionDiscontinuity() {}
+            public void onPositionDiscontinuity(int reason) {}
 
             @Override
             public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {}
+
+            @Override
+            public void onSeekProcessed() {}
         });
-        trackProgress();
+
+       // trackProgress();
+    }
+
+    public void playMusic_Orig() {
+        // Dont use MediaPlayer.. this is too restrictive and doesnt expose low-level APIs
+        // /MediaPlayer mPlayer = MediaPlayer.create(this, R.raw.medhasuktam);
+        //mPlayer.start();
+
+        BandwidthMeter bandwidthMeter;
+        ExtractorsFactory extractorsFactory;
+        TrackSelection.Factory trackSelectionFactory;
+        TrackSelector trackSelector;
+        DefaultBandwidthMeter defaultBandwidthMeter;
+        com.google.android.exoplayer2.upstream.DataSource.Factory dataSourceFactory;
+        MediaSource mediaSource;
+        bandwidthMeter = new DefaultBandwidthMeter();
+        extractorsFactory = new DefaultExtractorsFactory();
+        trackSelectionFactory = new AdaptiveTrackSelection.Factory(bandwidthMeter);
+        trackSelector = new DefaultTrackSelector(trackSelectionFactory);
+/*        dataSourceFactory = new DefaultDataSourceFactory(this,
+                Util.getUserAgent(this, "mediaPlayerSample"),
+                (TransferListener<? super DataSource>) bandwidthMeter);*/
+        defaultBandwidthMeter = new DefaultBandwidthMeter();
+        dataSourceFactory = new DefaultDataSourceFactory(this,
+                Util.getUserAgent(this, "mediaPlayerSample"), defaultBandwidthMeter);
+
+        mediaSource = new ExtractorMediaSource(Uri.parse(mAudioLocalFilePath), dataSourceFactory, extractorsFactory, null, null);
+        player = ExoPlayerFactory.newSimpleInstance(this, trackSelector);
+        player.prepare(mediaSource);
+
+        player.setPlayWhenReady(true);
+//        player.addListener(new SimpleExoPlayer.EventListener() {
+//            @Override
+//            public void onTimelineChanged(Timeline timeline, Object manifest) {}
+//
+//            @Override
+//            public void onTracksChanged(TrackGroupArray trackGroups, TrackSelectionArray trackSelections) {}
+//
+//            @Override
+//            public void onLoadingChanged(boolean isLoading) {}
+//
+//            @Override
+//            public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+//                if (playbackState == ExoPlayer.STATE_READY && !mFirstTimeSetupDoneFlag) {
+//                    long realDurationMillis = player.getDuration();
+//                    initializePlayerControlsBar_Orig(realDurationMillis / 10);
+//                    mFirstTimeSetupDoneFlag = true;
+//                }
+//            }
+//
+//            @Override
+//            public void onRepeatModeChanged(int repeatMode) {}
+//
+//            @Override
+//            public void onPlayerError(ExoPlaybackException error) {}
+//
+//            @Override
+//            public void onPositionDiscontinuity() {}
+//
+//            @Override
+//            public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {}
+//        });
+//        trackProgress();
     }
 
     public void trackProgress() {
-        mHandler = new Handler();
-        mRunnable = new Runnable() {
-            @Override
-            public void run() {
-                if (player != null) {
-                    long duration = player.getDuration() / 1000;
-                    long position = player.getCurrentPosition() / 10;
-                    if (duration > 0) {// (state == ExoPlayer.STATE_READY || state == ExoPlayer.STATE_ENDED))
-                        // todo@svishves: Send position as Message to a Handler
-                        identifyAndHighlightMarker(position);
-                        mHandler.postDelayed(this, 500);
-                    }
-                    if (player.getPlaybackState() == SimpleExoPlayer.STATE_ENDED) {
-                        notifyAudioEnded();
-                        mHandler.removeCallbacks(this);
-                    }
-                }
-            }
-        };
-        mHandler.postDelayed(mRunnable, 500);
+//        mHandler = new Handler();
+//        mRunnable = new Runnable() {
+//            @Override
+//            public void run() {
+//                if (player != null) {
+//                    long duration = player.getDuration() / 1000;
+//                    long position = player.getCurrentPosition() / 10;
+//                    if (duration > 0) {// (state == ExoPlayer.STATE_READY || state == ExoPlayer.STATE_ENDED))
+//                        // todo@svishves: Send position as Message to a Handler
+//                       // identifyAndHighlightMarker_Orig(position);
+//                        mHandler.postDelayed(this, 200);
+//                    }
+//                    if (player.getPlaybackState() == SimpleExoPlayer.STATE_ENDED) {
+//                        notifyAudioEnded();
+//                        mHandler.removeCallbacks(this);
+//                    }
+//                }
+//            }
+//        };
+//        mHandler.postDelayed(mRunnable, 200);
     }
 
     public void notifyAudioEnded() {
         playerControlBarView.setPlayPauseButtonIcon(true);
     }
 
-    public void identifyAndHighlightMarker(long position) {
-        if (mHighlightManager.isMarkerPresentForPos(position)) {
+    private int mNoOfTimesListened = 0;
+    private boolean mNowListeningNotRepeating = true;
+    private int mNoOfTimesRepeated = 0;
+    private boolean mIsChantModeEnabled;
+    private boolean mIsReadModeEnabled;
+    private boolean mIsListenModeEnabled;
+    private int mPrefListenNoOfTimes;
+    private int mPrefRepeatNoOfTimes;
+
+    private void setNowListening() {
+        setListeningOrRepeating(true);
+    }
+    private void setNowRepeating() {
+        setListeningOrRepeating(false);
+    }
+    private boolean areYouNowListening() {
+        return mNowListeningNotRepeating;
+    }
+    private boolean areYouNowRepeating() {
+        return !mNowListeningNotRepeating;
+    }
+    public void setListeningOrRepeating(boolean setToListen) {
+        mNowListeningNotRepeating = setToListen;
+        setEqualizerSettings();
+    }
+    public void setEqualizerSettings() {
+        if (mNowListeningNotRepeating) {
+            //Change to muffled audio clarity;
+        } else {
+            //Change to normal audio clarity;
+        }
+    }
+
+    public void fetchUserPreferences() {
+        mIsChantModeEnabled = GlobalSettings.getInstance().getmUseModeState() == GlobalSettings.MODE_STATE.CHANT_MODE;
+        mIsReadModeEnabled = GlobalSettings.getInstance().getmUseModeState() == GlobalSettings.MODE_STATE.READ_MODE;
+        mIsListenModeEnabled = GlobalSettings.getInstance().getmUseModeState() == GlobalSettings.MODE_STATE.LISTEN_MODE;
+        mPrefListenNoOfTimes = GlobalSettings.getInstance().getmListenNoOfTimes();
+        mPrefRepeatNoOfTimes = GlobalSettings.getInstance().getmRepeatNoOfTimes();
+    }
+
+    long prevMarkerStartTime = -1;
+    public void identifyAndHighlightMarker_Orig(long position) {
+        if (mHighlightManager != null) {
+            HighlightBox currBox = mHighlightManager.getCurrHighlighterPosition();
+            if (currBox != null) {
+                long currMarkerStartTime = currBox.getStartTime();
+                if (currMarkerStartTime - prevMarkerStartTime > 1) {
+                    onClickButtonPrev(playerControlBarView);
+                    prevMarkerStartTime = currMarkerStartTime;
+                    Toast.makeText(PDF_Activity.this, "Prev:" + String.valueOf(prevMarkerStartTime) + " Curr:" +
+                            String.valueOf(currMarkerStartTime), Toast.LENGTH_LONG).show();
+                }
+            }
+        }
+        if (mIsChantModeEnabled)
+            repeatAsNeeded(position);
+
+        if ((mIsListenModeEnabled || mIsChantModeEnabled)
+                && mHighlightManager.isMarkerPresentForPos(position)) {
             highlightText();
         }
 
         long duration = player.getDuration() / 10;
-        playerControlBarView.setElapsedTime(position);
-        playerControlBarView.setTotalTime(duration);
+        if (player.getPlaybackState() == ExoPlayer.STATE_READY) {
+            playerControlBarView.setElapsedTime(position);
+            playerControlBarView.setTotalTime(duration);
+        }
+    }
+
+    public void repeatAsNeeded(long currPlayPosition) {
+        HighlightBox currBox = mHighlightManager.getCurrHighlighterPosition();
+        try {
+            if (currBox != null) {
+                long currMarkerEndTime = currBox.getEndTime();
+
+                if (currPlayPosition > currMarkerEndTime) {
+                    //First listen.. then repeat
+                    if (areYouNowListening()) {
+                        mNoOfTimesListened++;
+                        if (mNoOfTimesListened < mPrefListenNoOfTimes) {
+                            mHighlightManager.moveToPrevMarker();
+                            long position = mHighlightManager.moveToNextMarker();
+                            player.seekTo(position);
+                        } else {
+                            // done listening
+                            mNoOfTimesListened = 0; //reset
+                            setNowRepeating();
+                            mHighlightManager.moveToPrevMarker();
+                            long position = mHighlightManager.moveToNextMarker();
+                            player.seekTo(position);
+                        }
+                    } else {
+                        mNoOfTimesRepeated++;
+                        if (mNoOfTimesRepeated < mPrefRepeatNoOfTimes) {
+                            mHighlightManager.moveToPrevMarker();
+                            long position = mHighlightManager.moveToNextMarker();
+                            player.seekTo(position);
+                        } else {
+                            // done repeating
+                            clearListeningRepeatingCounts();
+                            onClickNextButton();
+                        }
+                    }
+                }
+            }
+        } catch (HighlightManager.NoMarkerFoundException e) {
+        }
+
+    }
+
+    public void clearListeningRepeatingCounts() {
+        mNoOfTimesListened = mNoOfTimesRepeated = 0;
+        setNowListening();
     }
 
     @Override
@@ -573,29 +785,31 @@ public class PDF_Activity extends ActionBarCastActivity
 
     @Override
     public void onClickPrevButton() {
+        clearListeningRepeatingCounts();
         onClickButtonPrev(playerControlBarView);
     }
 
     @Override
     public void onClickNextButton() {
+        clearListeningRepeatingCounts();
         onClickButtonForward(playerControlBarView);
     }
 
     @Override
     public void onClickChangeToListenMode() {
         Toast.makeText(this, "Listen mode", Toast.LENGTH_SHORT).show();
-        GlobalSettingsSingleton.getInstance().setmUseModeState(GlobalSettingsSingleton.MODE_STATE.LISTEN_MODE);
+        GlobalSettings.getInstance().setmUseModeState(GlobalSettings.MODE_STATE.LISTEN_MODE);
     }
 
     @Override
     public void onClickChangeToChantMode() {
         Toast.makeText(this, "Chant-along mode", Toast.LENGTH_SHORT).show();
-        GlobalSettingsSingleton.getInstance().setmUseModeState(GlobalSettingsSingleton.MODE_STATE.CHANT_MODE);
+        GlobalSettings.getInstance().setmUseModeState(GlobalSettings.MODE_STATE.CHANT_MODE);
     }
 
     @Override
     public void onClickChangeToReadMode() {
         Toast.makeText(this, "Read mode", Toast.LENGTH_SHORT).show();
-        GlobalSettingsSingleton.getInstance().setmUseModeState(GlobalSettingsSingleton.MODE_STATE.READ_MODE);
+        GlobalSettings.getInstance().setmUseModeState(GlobalSettings.MODE_STATE.READ_MODE);
     }
 }
